@@ -64,8 +64,8 @@ print_status "Detected home directory: $USER_HOME"
 # Create systemd service directly
 print_status "Creating systemd service..."
 
-# Create the service using systemctl
-systemctl --force --full edit bikeos.service << EOF
+# Create the service file in the systemd directory
+cat > /etc/systemd/system/bikeos.service << EOF
 [Unit]
 Description=BikeOS - Smart Bike Monitoring System
 After=network.target
