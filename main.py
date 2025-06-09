@@ -401,6 +401,25 @@ class LogHandler(BaseHTTPRequestHandler):
                     self.wfile.write(b'Log file not found')
                 except Exception as e:
                     self.wfile.write(f'Error reading log file: {str(e)}'.encode())
+            elif self.path == '/version':
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                
+                try:
+                    # Get the current git commit hash
+                    result = subprocess.run(['git', 'rev-parse', 'HEAD'], 
+                                         capture_output=True, 
+                                         text=True, 
+                                         check=True)
+                    commit_hash = result.stdout.strip()
+                    self.wfile.write(commit_hash.encode())
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Error getting git commit hash: {e}")
+                    self.wfile.write(b'Error getting version')
+                except Exception as e:
+                    logger.error(f"Unexpected error getting version: {e}")
+                    self.wfile.write(b'Error getting version')
             else:
                 self.send_response(404)
                 self.end_headers()
