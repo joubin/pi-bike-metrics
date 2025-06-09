@@ -52,11 +52,13 @@ class BikeMetrics:
         self.stop_warning_active = False
         self.calories = 0.0  # Add calories tracking
         self.service_enabled = False  # Track service state
+        self.permanently_disabled = False  # Track if service is permanently disabled
 
-    def set_service_state(self, enabled):
-        """Update service state and stop beeping if service is disabled."""
-        self.service_enabled = enabled
-        if not enabled and self.stop_warning_active:
+    def disable_service(self):
+        """Permanently disable the service."""
+        self.service_enabled = False
+        self.permanently_disabled = True
+        if self.stop_warning_active:
             self.stop_warning_active = False
             if self.stop_warning_thread:
                 self.stop_warning_thread.join(timeout=1.0)
@@ -74,8 +76,8 @@ class BikeMetrics:
         self.total_distance += WHEEL_CIRCUMFERENCE
         self.last_rpm_update = current_time
         
-        # If we start pedaling, enable the service
-        if not self.is_pedaling:
+        # If we start pedaling and service isn't permanently disabled, enable it
+        if not self.is_pedaling and not self.permanently_disabled:
             self.is_pedaling = True
             self.service_enabled = True  # Auto-enable service when pedaling starts
         
@@ -92,6 +94,9 @@ class BikeMetrics:
                 # Check if we're stopping early (before 1 mile) and service is enabled
                 if self.service_enabled and self.total_distance < (EARLY_STOP_THRESHOLD * 1609.34):
                     self.start_stop_warning()
+                # If we've gone more than a mile, permanently disable the service
+                elif self.total_distance >= (EARLY_STOP_THRESHOLD * 1609.34):
+                    self.disable_service()
             self.current_rpm = 0.0
 
     def start_stop_warning(self):
@@ -131,7 +136,8 @@ class BikeMetrics:
             'rpm': self.current_rpm,
             'is_pedaling': self.is_pedaling,
             'calories': self.calories,
-            'service_enabled': self.service_enabled
+            'service_enabled': self.service_enabled,
+            'permanently_disabled': self.permanently_disabled
         }
 
     def cleanup(self):
@@ -168,8 +174,17 @@ bike_calories {metrics['calories']:.2f}
 # HELP bike_service_enabled Whether the service is enabled
 # TYPE bike_service_enabled gauge
 bike_service_enabled {1 if metrics['service_enabled'] else 0}
+
+# HELP bike_permanently_disabled Whether the service is permanently disabled
+# TYPE bike_permanently_disabled gauge
+bike_permanently_disabled {1 if metrics['permanently_disabled'] else 0}
 """
             self.wfile.write(response.encode())
+        elif self.path == '/service':
+            # GET /service permanently disables the service
+            bike_metrics.disable_service()
+            self.send_response(200)
+            self.end_headers()
         else:
             self.send_response(404)
             self.end_headers()
@@ -181,9 +196,9 @@ class ServiceHandler(BaseHTTPRequestHandler):
             post_data = self.rfile.read(content_length).decode('utf-8')
             
             if post_data == 'enable':
-                bike_metrics.set_service_state(True)
+                bike_metrics.service_enabled = True
             elif post_data == 'disable':
-                bike_metrics.set_service_state(False)
+                bike_metrics.service_enabled = False
             
             self.send_response(200)
             self.end_headers()
