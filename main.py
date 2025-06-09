@@ -1,9 +1,8 @@
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import time
-from simple import monitor_bike, cleanup
 import subprocess
 import importlib.util
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from beep import Beeper
 
 # Check and install required packages
@@ -15,28 +14,12 @@ for package in required_packages:
 
 import RPi.GPIO as GPIO
 
-# CONFIGURATION
-METRICS_PORT = 8000     # port to serve metrics
-HTTP_SERVER_PORT = 5000    # port to serve REST API
-IDLE_TIMEOUT = 5           # seconds after which beeping disables gracefully
-
-# STATE VARIABLES
-service_enabled = False  # Controls beeping
-manual_toggle = False    # Tracks if service was manually toggled off
-current_metrics = {
-    'rpm': 0.0,
-    'distance': 0.0,
-    'calories': 0.0,
-    'alarm_state': 0,
-    'service_state': 0
-}
-
 # Constants
 HALL_SENSOR_PIN = 17  # GPIO pin connected to hall sensor
 WHEEL_CIRCUMFERENCE = 2.105  # meters (26" wheel)
 MIN_RPM_THRESHOLD = 5  # Minimum RPM to consider as pedaling
 STOP_DETECTION_TIME = 2.0  # seconds to wait before considering stopped
-EARLY_STOP_THRESHOLD = 1.0  # miles threshold for early stop warning
+MAX_WARNING_TIME = 180  # 3 minutes in seconds
 
 class BikeMetrics:
     def __init__(self):
@@ -51,13 +34,20 @@ class BikeMetrics:
         self.stop_warning_thread = None
         self.stop_warning_active = False
         self.calories = 0.0  # Add calories tracking
-        self.service_enabled = False  # Track service state
-        self.permanently_disabled = False  # Track if service is permanently disabled
+        self.service_enabled = True  # Start enabled
+        self.warning_start_time = None
+
+    def reset_system(self):
+        """Reset the system state when pedaling starts."""
+        self.service_enabled = True
+        self.stop_warning_active = False
+        if self.stop_warning_thread:
+            self.stop_warning_thread.join(timeout=1.0)
+        self.warning_start_time = None
 
     def disable_service(self):
-        """Permanently disable the service."""
+        """Disable the service."""
         self.service_enabled = False
-        self.permanently_disabled = True
         if self.stop_warning_active:
             self.stop_warning_active = False
             if self.stop_warning_thread:
@@ -76,10 +66,11 @@ class BikeMetrics:
         self.total_distance += WHEEL_CIRCUMFERENCE
         self.last_rpm_update = current_time
         
-        # If we start pedaling and service isn't permanently disabled, enable it
-        if not self.is_pedaling and not self.permanently_disabled:
+        # If we start pedaling, reset the system and play start beep
+        if not self.is_pedaling:
             self.is_pedaling = True
-            self.service_enabled = True  # Auto-enable service when pedaling starts
+            self.reset_system()
+            self.beeper.short_beep()  # Acknowledge start with short beep
         
         self.last_pedaling_time = current_time
         
@@ -91,40 +82,36 @@ class BikeMetrics:
         if self.last_rpm_update and (current_time - self.last_rpm_update) > STOP_DETECTION_TIME:
             if self.is_pedaling:
                 self.is_pedaling = False
-                # Check if we're stopping early (before 1 mile) and service is enabled
-                if self.service_enabled and self.total_distance < (EARLY_STOP_THRESHOLD * 1609.34):
+                # Play stop beep and start warning pattern if service is enabled
+                if self.service_enabled:
+                    self.beeper.long_beep()  # Acknowledge stop with long beep
                     self.start_stop_warning()
-                # If we've gone more than a mile, permanently disable the service
-                elif self.total_distance >= (EARLY_STOP_THRESHOLD * 1609.34):
-                    self.disable_service()
             self.current_rpm = 0.0
 
     def start_stop_warning(self):
         if not self.stop_warning_active and self.service_enabled:
             self.stop_warning_active = True
+            self.warning_start_time = time.time()
             self.stop_warning_thread = threading.Thread(target=self._stop_warning_loop)
             self.stop_warning_thread.daemon = True
             self.stop_warning_thread.start()
 
     def _stop_warning_loop(self):
-        start_time = time.time()
         beep_count = 1
-        max_time = 300  # 5 minutes in seconds
         
-        while self.stop_warning_active and self.service_enabled and (time.time() - start_time) < max_time:
+        while self.stop_warning_active and self.service_enabled:
             if not self.is_pedaling:  # Only continue if still not pedaling
-                # Play initial long beep
-                if beep_count == 1:
-                    self.beeper.long_beep()
-                    time.sleep(10)
-                    beep_count += 1
-                else:
-                    # Play multiple short beeps based on time elapsed
-                    for _ in range(beep_count):
-                        self.beeper.short_beep()
-                        time.sleep(0.2)
-                    time.sleep(10 - (0.2 * beep_count))
-                    beep_count += 1
+                # Check if we've exceeded the maximum warning time
+                if time.time() - self.warning_start_time > MAX_WARNING_TIME:
+                    self.stop_warning_active = False
+                    break
+                    
+                # Play multiple short beeps based on time elapsed
+                for _ in range(beep_count):
+                    self.beeper.short_beep()
+                    time.sleep(0.2)
+                time.sleep(10 - (0.2 * beep_count))
+                beep_count += 1
             else:
                 self.stop_warning_active = False
                 break
@@ -136,8 +123,7 @@ class BikeMetrics:
             'rpm': self.current_rpm,
             'is_pedaling': self.is_pedaling,
             'calories': self.calories,
-            'service_enabled': self.service_enabled,
-            'permanently_disabled': self.permanently_disabled
+            'service_enabled': self.service_enabled
         }
 
     def cleanup(self):
@@ -174,95 +160,61 @@ bike_calories {metrics['calories']:.2f}
 # HELP bike_service_enabled Whether the service is enabled
 # TYPE bike_service_enabled gauge
 bike_service_enabled {1 if metrics['service_enabled'] else 0}
-
-# HELP bike_permanently_disabled Whether the service is permanently disabled
-# TYPE bike_permanently_disabled gauge
-bike_permanently_disabled {1 if metrics['permanently_disabled'] else 0}
 """
             self.wfile.write(response.encode())
-        elif self.path == '/service':
-            # GET /service permanently disables the service
-            bike_metrics.disable_service()
-            self.send_response(200)
-            self.end_headers()
         else:
             self.send_response(404)
             self.end_headers()
 
 class ServiceHandler(BaseHTTPRequestHandler):
-    def do_POST(self):
+    def do_GET(self):
         if self.path == '/service':
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length).decode('utf-8')
-            
-            if post_data == 'enable':
-                bike_metrics.service_enabled = True
-            elif post_data == 'disable':
-                bike_metrics.service_enabled = False
-            
+            bike_metrics.disable_service()
             self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
             self.end_headers()
+            self.wfile.write(b'Service disabled')
         else:
             self.send_response(404)
             self.end_headers()
 
 def run_metrics_server():
-    server = HTTPServer(('', METRICS_PORT), MetricsHandler)
-    print(f"Metrics server running at :{METRICS_PORT}/metrics")
-    server.serve_forever()
+    server_address = ('', 8000)
+    httpd = HTTPServer(server_address, MetricsHandler)
+    print("Starting metrics server on port 8000...")
+    httpd.serve_forever()
 
 def run_service_server():
-    server = HTTPServer(('', HTTP_SERVER_PORT), ServiceHandler)
-    print(f"Service server running at :{HTTP_SERVER_PORT}/service")
-    server.serve_forever()
+    server_address = ('', 5000)
+    httpd = HTTPServer(server_address, ServiceHandler)
+    print("Starting service server on port 5000...")
+    httpd.serve_forever()
 
-# Start metrics server in a separate thread
-metrics_thread = threading.Thread(target=run_metrics_server)
-metrics_thread.daemon = True
-metrics_thread.start()
-
-# Start service server in a separate thread
-service_thread = threading.Thread(target=run_service_server)
-service_thread.daemon = True
-service_thread.start()
-
-print(f"Monitoring pedal sensor... Metrics at :{METRICS_PORT}/metrics. Service at :{HTTP_SERVER_PORT}/service. Press Ctrl+C to exit.")
-
-try:
-    # Setup GPIO
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(HALL_SENSOR_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    
-    # Initialize metrics
-    bike_metrics = BikeMetrics()
-    GPIO.add_event_detect(HALL_SENSOR_PIN, GPIO.FALLING, callback=bike_metrics.pulse_callback)
-    
-    while True:
-        metrics = bike_metrics.get_metrics()
+if __name__ == "__main__":
+    try:
+        # Setup GPIO
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(HALL_SENSOR_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
         
-        if metrics:
-            # Update metrics
-            current_metrics['rpm'] = metrics['rpm']
-            current_metrics['distance'] = metrics['distance']
-            current_metrics['calories'] = metrics['calories']
+        # Initialize metrics
+        bike_metrics = BikeMetrics()
+        GPIO.add_event_detect(HALL_SENSOR_PIN, GPIO.FALLING, callback=bike_metrics.pulse_callback)
+        
+        # Start metrics server in a separate thread
+        metrics_thread = threading.Thread(target=run_metrics_server)
+        metrics_thread.daemon = True
+        metrics_thread.start()
+        
+        # Start service server in a separate thread
+        service_thread = threading.Thread(target=run_service_server)
+        service_thread.daemon = True
+        service_thread.start()
+        
+        # Keep main thread alive
+        while True:
+            time.sleep(1)
             
-            # Handle service state
-            if not service_enabled and metrics['is_pedaling']:
-                service_enabled = True
-                current_metrics['service_state'] = 1
-                manual_toggle = False
-                print("Service auto-enabled on pedal activity.")
-            
-            # Handle alarm state
-            if service_enabled and not metrics['is_pedaling']:
-                current_metrics['alarm_state'] = 1  # Alarm is active
-                if not manual_toggle:
-                    service_enabled = False
-                    current_metrics['service_state'] = 0
-                    print("Service auto-disabled due to inactivity.")
-            else:
-                current_metrics['alarm_state'] = 0
-
-except KeyboardInterrupt:
-    print("Exiting...")
-    cleanup()
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    finally:
+        bike_metrics.cleanup()
