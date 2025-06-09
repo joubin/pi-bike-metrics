@@ -72,8 +72,8 @@ print_status "Creating systemd service..."
 cat > /etc/systemd/system/bikeos.service << EOF
 [Unit]
 Description=BikeOS - Smart Bike Monitoring System
-After=network.target
-Wants=network-online.target
+After=network-online.target
+Requires=network-online.target
 
 [Service]
 Type=simple
