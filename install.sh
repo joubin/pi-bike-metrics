@@ -40,6 +40,10 @@ if [ ! -f "$SCRIPT_DIR/beep.py" ]; then
     exit 1
 fi
 
+# Make start.sh executable
+print_status "Making start script executable..."
+chmod +x "$SCRIPT_DIR/start.sh"
+
 # Detect Python path
 PYTHON_PATH=$(which python3)
 if [ -z "$PYTHON_PATH" ]; then
@@ -75,7 +79,7 @@ Wants=network-online.target
 Type=simple
 User=$CURRENT_USER
 WorkingDirectory=$SCRIPT_DIR
-ExecStart=$PYTHON_PATH $SCRIPT_DIR/main.py
+ExecStart=$SCRIPT_DIR/start.sh
 Restart=always
 RestartSec=10
 StandardOutput=syslog
