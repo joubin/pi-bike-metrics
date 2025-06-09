@@ -166,6 +166,10 @@ bike_service_enabled {1 if metrics['service_enabled'] else 0}
             self.send_response(404)
             self.end_headers()
 
+    def log_message(self, format, *args):
+        # Silence default logging
+        return
+
 class ServiceHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/service':
@@ -178,14 +182,18 @@ class ServiceHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
+    def log_message(self, format, *args):
+        # Silence default logging
+        return
+
 def run_metrics_server():
-    server_address = ('', 8000)
+    server_address = ('0.0.0.0', 8000)  # Bind to all interfaces
     httpd = HTTPServer(server_address, MetricsHandler)
     print("Starting metrics server on port 8000...")
     httpd.serve_forever()
 
 def run_service_server():
-    server_address = ('', 5000)
+    server_address = ('0.0.0.0', 5000)  # Bind to all interfaces
     httpd = HTTPServer(server_address, ServiceHandler)
     print("Starting service server on port 5000...")
     httpd.serve_forever()
