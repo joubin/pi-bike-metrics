@@ -50,6 +50,7 @@ class BikeMetrics:
         self.beeper = Beeper()
         self.stop_warning_thread = None
         self.stop_warning_active = False
+        self.calories = 0.0  # Add calories tracking
 
     def pulse_callback(self, channel):
         current_time = time.time()
@@ -65,6 +66,9 @@ class BikeMetrics:
         self.last_rpm_update = current_time
         self.is_pedaling = True
         self.last_pedaling_time = current_time
+        
+        # Update calories (rough estimate: 1 calorie per 10 meters)
+        self.calories += WHEEL_CIRCUMFERENCE / 10.0
 
     def check_pedaling_status(self):
         current_time = time.time()
@@ -111,7 +115,8 @@ class BikeMetrics:
         return {
             'distance': self.total_distance / 1609.34,  # Convert to miles
             'rpm': self.current_rpm,
-            'is_pedaling': self.is_pedaling
+            'is_pedaling': self.is_pedaling,
+            'calories': self.calories
         }
 
     def cleanup(self):
@@ -140,6 +145,10 @@ bike_rpm {metrics['rpm']:.2f}
 # HELP bike_pedaling Whether the bike is currently being pedaled
 # TYPE bike_pedaling gauge
 bike_pedaling {1 if metrics['is_pedaling'] else 0}
+
+# HELP bike_calories Total estimated calories burned
+# TYPE bike_calories gauge
+bike_calories {metrics['calories']:.2f}
 """
             self.wfile.write(response.encode())
         else:
@@ -209,7 +218,7 @@ try:
             # Update metrics
             current_metrics['rpm'] = metrics['rpm']
             current_metrics['distance'] = metrics['distance']
-            current_metrics['calories'] = metrics.calories
+            current_metrics['calories'] = metrics['calories']
             
             # Handle service state
             if not service_enabled and metrics['is_pedaling']:
