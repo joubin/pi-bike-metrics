@@ -45,6 +45,25 @@ class BikeMetrics:
         self.service_enabled = True  # Start enabled
         self.warning_start_time = None
         self._lock = threading.Lock()  # Thread safety lock
+        
+        # System metrics
+        self.system_start_time = time.time()
+        self.last_metrics_update = time.time()
+        self.total_pedaling_time = 0.0
+        self.total_idle_time = 0.0
+        self.total_warning_time = 0.0
+        self.warning_count = 0
+        self.service_disable_count = 0
+        self.last_service_disable_time = None
+        self.peak_rpm = 0.0
+        self.peak_speed = 0.0  # km/h
+        self.total_pulses = 0
+        self.error_count = 0
+        
+        # Metrics update intervals (in seconds)
+        self.ACTIVE_UPDATE_INTERVAL = 1.0  # Update every second when active
+        self.DISABLED_UPDATE_INTERVAL = 5.0  # Update every 5 seconds when disabled
+        self.last_metrics_publish = time.time()
 
     def reset_system(self):
         """Reset the system state when pedaling starts."""
@@ -56,6 +75,7 @@ class BikeMetrics:
                     self.stop_warning_thread.join(timeout=THREAD_JOIN_TIMEOUT)
                 except Exception as e:
                     logger.error(f"Error joining warning thread: {e}")
+                    self.error_count += 1
             self.warning_start_time = None
             logger.info("System reset")
 
@@ -63,6 +83,8 @@ class BikeMetrics:
         """Disable the service."""
         with self._lock:
             self.service_enabled = False
+            self.service_disable_count += 1
+            self.last_service_disable_time = time.time()
             if self.stop_warning_active:
                 self.stop_warning_active = False
                 if self.stop_warning_thread:
@@ -70,6 +92,7 @@ class BikeMetrics:
                         self.stop_warning_thread.join(timeout=THREAD_JOIN_TIMEOUT)
                     except Exception as e:
                         logger.error(f"Error joining warning thread: {e}")
+                        self.error_count += 1
             logger.info("Service disabled")
 
     def pulse_callback(self, channel):
@@ -80,9 +103,18 @@ class BikeMetrics:
                 time_diff = current_time - self.last_pulse_time
                 if time_diff > 0:
                     self.current_rpm = 60.0 / time_diff  # Convert to RPM
+                    # Update peak RPM if current RPM is higher
+                    if self.current_rpm > self.peak_rpm:
+                        self.peak_rpm = self.current_rpm
+                    
+                    # Calculate speed in km/h
+                    speed = (WHEEL_CIRCUMFERENCE * self.current_rpm * 60) / 1000
+                    if speed > self.peak_speed:
+                        self.peak_speed = speed
             
             self.last_pulse_time = current_time
             self.pulse_count += 1
+            self.total_pulses += 1
             self.total_distance += WHEEL_CIRCUMFERENCE
             self.last_rpm_update = current_time
             
@@ -99,6 +131,7 @@ class BikeMetrics:
             self.calories += WHEEL_CIRCUMFERENCE / 10.0
         except Exception as e:
             logger.error(f"Error in pulse callback: {e}")
+            self.error_count += 1
 
     def check_pedaling_status(self):
         try:
@@ -106,20 +139,30 @@ class BikeMetrics:
             if self.last_rpm_update and (current_time - self.last_rpm_update) > STOP_DETECTION_TIME:
                 if self.is_pedaling:
                     self.is_pedaling = False
+                    # Update pedaling time
+                    if self.last_pedaling_time:
+                        self.total_pedaling_time += current_time - self.last_pedaling_time
                     # Play stop beep and start warning pattern if service is enabled
                     if self.service_enabled:
                         self.beeper.long_beep()  # Acknowledge stop with long beep
                         self.start_stop_warning()
                         logger.info("Pedaling stopped, warning started")
                 self.current_rpm = 0.0
+            elif self.is_pedaling:
+                # Update pedaling time
+                if self.last_pedaling_time:
+                    self.total_pedaling_time += current_time - self.last_pedaling_time
+                    self.last_pedaling_time = current_time
         except Exception as e:
             logger.error(f"Error checking pedaling status: {e}")
+            self.error_count += 1
 
     def start_stop_warning(self):
         with self._lock:
             if not self.stop_warning_active and self.service_enabled:
                 self.stop_warning_active = True
                 self.warning_start_time = time.time()
+                self.warning_count += 1
                 self.stop_warning_thread = threading.Thread(target=self._stop_warning_loop)
                 self.stop_warning_thread.daemon = True
                 self.stop_warning_thread.start()
@@ -128,6 +171,7 @@ class BikeMetrics:
     def _stop_warning_loop(self):
         try:
             beep_count = 1
+            warning_start = time.time()
             
             while self.stop_warning_active and self.service_enabled:
                 if not self.is_pedaling:  # Only continue if still not pedaling
@@ -147,18 +191,54 @@ class BikeMetrics:
                     self.stop_warning_active = False
                     logger.info("Warning pattern stopped - pedaling resumed")
                     break
+            
+            # Update total warning time
+            self.total_warning_time += time.time() - warning_start
         except Exception as e:
             logger.error(f"Error in warning loop: {e}")
+            self.error_count += 1
             self.stop_warning_active = False
 
+    def should_update_metrics(self):
+        """Determine if metrics should be updated based on service state."""
+        current_time = time.time()
+        interval = self.ACTIVE_UPDATE_INTERVAL if self.service_enabled else self.DISABLED_UPDATE_INTERVAL
+        return (current_time - self.last_metrics_publish) >= interval
+
     def get_metrics(self):
-        self.check_pedaling_status()
+        current_time = time.time()
+        
+        # Only update metrics if enough time has passed
+        if self.should_update_metrics():
+            self.check_pedaling_status()
+            
+            # Update idle time if not pedaling
+            if not self.is_pedaling and self.last_pedaling_time:
+                self.total_idle_time += current_time - self.last_pedaling_time
+                self.last_pedaling_time = current_time
+            
+            # Update last metrics update time
+            self.last_metrics_update = current_time
+            self.last_metrics_publish = current_time
+        
         return {
             'distance': self.total_distance / 1609.34,  # Convert to miles
             'rpm': self.current_rpm,
             'is_pedaling': self.is_pedaling,
             'calories': self.calories,
-            'service_enabled': self.service_enabled
+            'service_enabled': self.service_enabled,
+            'system_uptime': current_time - self.system_start_time,
+            'total_pedaling_time': self.total_pedaling_time,
+            'total_idle_time': self.total_idle_time,
+            'total_warning_time': self.total_warning_time,
+            'warning_count': self.warning_count,
+            'service_disable_count': self.service_disable_count,
+            'peak_rpm': self.peak_rpm,
+            'peak_speed': self.peak_speed,
+            'total_pulses': self.total_pulses,
+            'error_count': self.error_count,
+            'last_service_disable_seconds': (current_time - self.last_service_disable_time) if self.last_service_disable_time else 0,
+            'metrics_update_interval': self.ACTIVE_UPDATE_INTERVAL if self.service_enabled else self.DISABLED_UPDATE_INTERVAL
         }
 
     def cleanup(self):
@@ -200,6 +280,54 @@ bike_calories {metrics['calories']:.2f}
 # HELP bike_service_enabled Whether the service is enabled
 # TYPE bike_service_enabled gauge
 bike_service_enabled {1 if metrics['service_enabled'] else 0}
+
+# HELP bike_system_uptime System uptime in seconds
+# TYPE bike_system_uptime gauge
+bike_system_uptime {metrics['system_uptime']:.2f}
+
+# HELP bike_total_pedaling_time Total time spent pedaling in seconds
+# TYPE bike_total_pedaling_time gauge
+bike_total_pedaling_time {metrics['total_pedaling_time']:.2f}
+
+# HELP bike_total_idle_time Total time spent idle in seconds
+# TYPE bike_total_idle_time gauge
+bike_total_idle_time {metrics['total_idle_time']:.2f}
+
+# HELP bike_total_warning_time Total time spent in warning state in seconds
+# TYPE bike_total_warning_time gauge
+bike_total_warning_time {metrics['total_warning_time']:.2f}
+
+# HELP bike_warning_count Total number of warning events
+# TYPE bike_warning_count counter
+bike_warning_count {metrics['warning_count']}
+
+# HELP bike_service_disable_count Total number of service disable events
+# TYPE bike_service_disable_count counter
+bike_service_disable_count {metrics['service_disable_count']}
+
+# HELP bike_peak_rpm Highest recorded RPM
+# TYPE bike_peak_rpm gauge
+bike_peak_rpm {metrics['peak_rpm']:.2f}
+
+# HELP bike_peak_speed Highest recorded speed in km/h
+# TYPE bike_peak_speed gauge
+bike_peak_speed {metrics['peak_speed']:.2f}
+
+# HELP bike_total_pulses Total number of hall sensor pulses
+# TYPE bike_total_pulses counter
+bike_total_pulses {metrics['total_pulses']}
+
+# HELP bike_error_count Total number of errors encountered
+# TYPE bike_error_count counter
+bike_error_count {metrics['error_count']}
+
+# HELP bike_last_service_disable_seconds Seconds since last service disable
+# TYPE bike_last_service_disable_seconds gauge
+bike_last_service_disable_seconds {metrics['last_service_disable_seconds']:.2f}
+
+# HELP bike_metrics_update_interval Current metrics update interval in seconds
+# TYPE bike_metrics_update_interval gauge
+bike_metrics_update_interval {metrics['metrics_update_interval']}
 """
                 self.wfile.write(response.encode())
             else:
