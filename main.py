@@ -152,9 +152,9 @@ class BikeMetrics:
                     # Update pedaling time
                     if self.last_pedaling_time:
                         self.total_pedaling_time += current_time - self.last_pedaling_time
-                    # Play stop beep and start warning pattern if service is enabled
+                    # Always play stop beep, but only start warning pattern if service is enabled
+                    self.beeper.long_beep()  # Acknowledge stop with long beep
                     if self.service_enabled:
-                        self.beeper.long_beep()  # Acknowledge stop with long beep
                         self.start_stop_warning()
                         logger.info("Pedaling stopped, warning started")
                     else:
