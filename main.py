@@ -73,7 +73,12 @@ class BikeMetrics:
         self.pulse_count += 1
         self.total_distance += WHEEL_CIRCUMFERENCE
         self.last_rpm_update = current_time
-        self.is_pedaling = True
+        
+        # If we start pedaling, enable the service
+        if not self.is_pedaling:
+            self.is_pedaling = True
+            self.service_enabled = True  # Auto-enable service when pedaling starts
+        
         self.last_pedaling_time = current_time
         
         # Update calories (rough estimate: 1 calorie per 10 meters)
@@ -170,29 +175,21 @@ bike_service_enabled {1 if metrics['service_enabled'] else 0}
             self.end_headers()
 
 class ServiceHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        global service_enabled, manual_toggle
-
+    def do_POST(self):
         if self.path == '/service':
-            # Toggle the service state manually
-            service_enabled = not service_enabled
-            current_metrics['service_state'] = 1 if service_enabled else 0
-            manual_toggle = not service_enabled  # mark that the user manually disabled
-            state = "enabled" if service_enabled else "disabled"
-            print(f"Service {state} via GET /service.")
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length).decode('utf-8')
+            
+            if post_data == 'enable':
+                bike_metrics.set_service_state(True)
+            elif post_data == 'disable':
+                bike_metrics.set_service_state(False)
+            
             self.send_response(200)
-            self.send_header('Content-type', 'application/json')
             self.end_headers()
-            response = {'service_enabled': service_enabled}
-            self.wfile.write(str(response).encode())
         else:
             self.send_response(404)
             self.end_headers()
-            self.wfile.write(b'Not Found')
-
-    def log_message(self, format, *args):
-        # Silence default logging
-        return
 
 def run_metrics_server():
     server = HTTPServer(('', METRICS_PORT), MetricsHandler)
