@@ -108,7 +108,6 @@ print(f"Monitoring pedal sensor... Metrics at :{METRICS_PORT}/metrics. Service a
 
 try:
     while True:
-        time.sleep(0.5)
         metrics = monitor_bike()
         
         if metrics:

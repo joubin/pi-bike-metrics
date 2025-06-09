@@ -115,7 +115,6 @@ if __name__ == "__main__":
     print("Monitoring pedal sensor... Press Ctrl+C to exit.")
     try:
         while True:
-            time.sleep(0.5)
             monitor_bike()
     except KeyboardInterrupt:
         print("\nExiting...")
