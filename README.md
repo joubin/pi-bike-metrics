@@ -68,23 +68,34 @@ cd bikeos
 
 2. The system will automatically install required dependencies on first run.
 
-3. Install as a systemd service:
-```bash
-# Copy the service file to systemd directory
-sudo cp bikeos.service /etc/systemd/system/
+3. Install as a systemd service (choose one method):
 
-# Reload systemd to recognize the new service
-sudo systemctl daemon-reload
+   **Option A - Using the installation script (recommended):**
+   ```bash
+   # Make the script executable
+   chmod +x install.sh
+   
+   # Run the installation script
+   sudo ./install.sh
+   ```
 
-# Enable the service to start on boot
-sudo systemctl enable bikeos
-
-# Start the service
-sudo systemctl start bikeos
-
-# Check service status
-sudo systemctl status bikeos
-```
+   **Option B - Manual installation:**
+   ```bash
+   # Copy the service file to systemd directory
+   sudo cp bikeos.service /etc/systemd/system/
+   
+   # Reload systemd to recognize the new service
+   sudo systemctl daemon-reload
+   
+   # Enable the service to start on boot
+   sudo systemctl enable bikeos
+   
+   # Start the service
+   sudo systemctl start bikeos
+   
+   # Check service status
+   sudo systemctl status bikeos
+   ```
 
 4. View service logs:
 ```bash
