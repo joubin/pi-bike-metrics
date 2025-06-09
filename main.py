@@ -3,14 +3,20 @@ import subprocess
 import importlib.util
 import threading
 import logging
+from logging.handlers import RotatingFileHandler
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from beep import Beeper
 import RPi.GPIO as GPIO
 
 # Configure logging
+log_file = '/tmp/bikeos.log'
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Console handler
+        RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=1)  # 10MB file size limit
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -379,6 +385,34 @@ class ServiceHandler(BaseHTTPRequestHandler):
         # Silence default logging
         return
 
+class LogHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        try:
+            if self.path == '/logs':
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                
+                try:
+                    with open(log_file, 'r') as f:
+                        log_content = f.read()
+                    self.wfile.write(log_content.encode())
+                except FileNotFoundError:
+                    self.wfile.write(b'Log file not found')
+                except Exception as e:
+                    self.wfile.write(f'Error reading log file: {str(e)}'.encode())
+            else:
+                self.send_response(404)
+                self.end_headers()
+        except Exception as e:
+            logger.error(f"Error handling log request: {e}")
+            self.send_response(500)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        # Silence default logging
+        return
+
 def run_metrics_server():
     try:
         server_address = ('0.0.0.0', 8000)  # Bind to all interfaces
@@ -396,6 +430,15 @@ def run_service_server():
         httpd.serve_forever()
     except Exception as e:
         logger.error(f"Error in service server: {e}")
+
+def run_log_server():
+    try:
+        server_address = ('0.0.0.0', 8001)  # Bind to all interfaces
+        httpd = HTTPServer(server_address, LogHandler)
+        logger.info("Starting log server on port 8001...")
+        httpd.serve_forever()
+    except Exception as e:
+        logger.error(f"Error in log server: {e}")
 
 if __name__ == "__main__":
     try:
@@ -416,6 +459,11 @@ if __name__ == "__main__":
         service_thread = threading.Thread(target=run_service_server)
         service_thread.daemon = True
         service_thread.start()
+
+        # Start log server in a separate thread
+        log_thread = threading.Thread(target=run_log_server)
+        log_thread.daemon = True
+        log_thread.start()
         
         logger.info("System initialized and running")
         

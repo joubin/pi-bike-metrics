@@ -1,11 +1,17 @@
 import RPi.GPIO as GPIO
 import time
 import logging
+from logging.handlers import RotatingFileHandler
 
 # Configure logging
+log_file = '/tmp/bikeos.log'
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Console handler
+        RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=1)  # 10MB file size limit
+    ]
 )
 logger = logging.getLogger(__name__)
 
