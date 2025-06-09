@@ -51,6 +51,15 @@ class BikeMetrics:
         self.stop_warning_thread = None
         self.stop_warning_active = False
         self.calories = 0.0  # Add calories tracking
+        self.service_enabled = False  # Track service state
+
+    def set_service_state(self, enabled):
+        """Update service state and stop beeping if service is disabled."""
+        self.service_enabled = enabled
+        if not enabled and self.stop_warning_active:
+            self.stop_warning_active = False
+            if self.stop_warning_thread:
+                self.stop_warning_thread.join(timeout=1.0)
 
     def pulse_callback(self, channel):
         current_time = time.time()
@@ -75,13 +84,13 @@ class BikeMetrics:
         if self.last_rpm_update and (current_time - self.last_rpm_update) > STOP_DETECTION_TIME:
             if self.is_pedaling:
                 self.is_pedaling = False
-                # Check if we're stopping early (before 1 mile)
-                if self.total_distance < (EARLY_STOP_THRESHOLD * 1609.34):  # Convert miles to meters
+                # Check if we're stopping early (before 1 mile) and service is enabled
+                if self.service_enabled and self.total_distance < (EARLY_STOP_THRESHOLD * 1609.34):
                     self.start_stop_warning()
             self.current_rpm = 0.0
 
     def start_stop_warning(self):
-        if not self.stop_warning_active:
+        if not self.stop_warning_active and self.service_enabled:
             self.stop_warning_active = True
             self.stop_warning_thread = threading.Thread(target=self._stop_warning_loop)
             self.stop_warning_thread.daemon = True
@@ -92,7 +101,7 @@ class BikeMetrics:
         beep_count = 1
         max_time = 300  # 5 minutes in seconds
         
-        while self.stop_warning_active and (time.time() - start_time) < max_time:
+        while self.stop_warning_active and self.service_enabled and (time.time() - start_time) < max_time:
             if not self.is_pedaling:  # Only continue if still not pedaling
                 # Play initial long beep
                 if beep_count == 1:
@@ -116,7 +125,8 @@ class BikeMetrics:
             'distance': self.total_distance / 1609.34,  # Convert to miles
             'rpm': self.current_rpm,
             'is_pedaling': self.is_pedaling,
-            'calories': self.calories
+            'calories': self.calories,
+            'service_enabled': self.service_enabled
         }
 
     def cleanup(self):
@@ -149,6 +159,10 @@ bike_pedaling {1 if metrics['is_pedaling'] else 0}
 # HELP bike_calories Total estimated calories burned
 # TYPE bike_calories gauge
 bike_calories {metrics['calories']:.2f}
+
+# HELP bike_service_enabled Whether the service is enabled
+# TYPE bike_service_enabled gauge
+bike_service_enabled {1 if metrics['service_enabled'] else 0}
 """
             self.wfile.write(response.encode())
         else:
