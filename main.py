@@ -68,7 +68,10 @@ class BikeMetrics:
     def reset_system(self):
         """Reset the system state when pedaling starts."""
         with self._lock:
-            self.service_enabled = True
+            # Only re-enable if we were previously disabled
+            if not self.service_enabled:
+                self.service_enabled = True
+                logger.info("Service re-enabled due to pedaling")
             self.stop_warning_active = False
             if self.stop_warning_thread:
                 try:
@@ -85,6 +88,7 @@ class BikeMetrics:
             self.service_enabled = False
             self.service_disable_count += 1
             self.last_service_disable_time = time.time()
+            # Stop any active warnings
             if self.stop_warning_active:
                 self.stop_warning_active = False
                 if self.stop_warning_thread:
@@ -147,6 +151,8 @@ class BikeMetrics:
                         self.beeper.long_beep()  # Acknowledge stop with long beep
                         self.start_stop_warning()
                         logger.info("Pedaling stopped, warning started")
+                    else:
+                        logger.info("Pedaling stopped, but service is disabled - no warnings")
                 self.current_rpm = 0.0
             elif self.is_pedaling:
                 # Update pedaling time
@@ -167,6 +173,8 @@ class BikeMetrics:
                 self.stop_warning_thread.daemon = True
                 self.stop_warning_thread.start()
                 logger.info("Warning pattern started")
+            elif not self.service_enabled:
+                logger.info("Warning not started - service is disabled")
 
     def _stop_warning_loop(self):
         try:
@@ -183,10 +191,17 @@ class BikeMetrics:
                         
                     # Play multiple short beeps based on time elapsed
                     for _ in range(beep_count):
+                        if not self.service_enabled:  # Check service state before each beep
+                            logger.info("Warning stopped - service disabled")
+                            self.stop_warning_active = False
+                            break
                         self.beeper.short_beep()
                         time.sleep(0.2)
-                    time.sleep(10 - (0.2 * beep_count))
-                    beep_count += 1
+                    
+                    # Only sleep if we're still active
+                    if self.stop_warning_active and self.service_enabled:
+                        time.sleep(10 - (0.2 * beep_count))
+                        beep_count += 1
                 else:
                     self.stop_warning_active = False
                     logger.info("Warning pattern stopped - pedaling resumed")
