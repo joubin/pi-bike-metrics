@@ -66,6 +66,10 @@ class BikeMetrics:
         self.total_pulses = 0
         self.error_count = 0
         
+        # Peak metrics reset
+        self.last_peak_reset = time.time()
+        self.PEAK_RESET_INTERVAL = 300  # Reset peak values every 5 minutes
+        
         # Metrics update intervals (in seconds)
         self.ACTIVE_UPDATE_INTERVAL = 1.0  # Update every second when active
         self.DISABLED_UPDATE_INTERVAL = 5.0  # Update every 5 seconds when disabled
@@ -105,9 +109,22 @@ class BikeMetrics:
                         self.error_count += 1
             logger.info("Service disabled")
 
+    def reset_peak_metrics(self):
+        """Reset peak metrics if enough time has passed."""
+        current_time = time.time()
+        if current_time - self.last_peak_reset >= self.PEAK_RESET_INTERVAL:
+            with self._lock:
+                self.peak_rpm = 0.0
+                self.peak_speed = 0.0
+                self.last_peak_reset = current_time
+                logger.info("Peak metrics reset")
+
     def pulse_callback(self, channel):
         try:
             current_time = time.time()
+            
+            # Reset peak metrics if needed
+            self.reset_peak_metrics()
             
             if self.last_pulse_time is not None:
                 time_diff = current_time - self.last_pulse_time
