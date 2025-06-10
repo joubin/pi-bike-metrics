@@ -14,6 +14,9 @@ When I'm working, I sometimes forget to pedal. This tool simply takes metrics fr
 - Service control via HTTP endpoint
 - Automatic dependency management
 - Comprehensive system metrics
+- Logging system with rotation
+- Peak metrics tracking and auto-reset
+- Multiple HTTP endpoints for metrics, service control, and logs
 
 ## Hardware Requirements
 
@@ -111,10 +114,10 @@ curl http://localhost:5000/service
 The system provides the following Prometheus metrics:
 
 ### Core Metrics
-- `bike_distance`: Total distance in miles
+- `bike_distance`: Total distance in meters
 - `bike_rpm`: Current RPM
 - `bike_pedaling`: Whether currently pedaling
-- `bike_calories`: Estimated calories burned
+- `bike_calories`: Estimated calories burned (1 calorie per 10 meters)
 
 ### System Metrics
 - `bike_system_uptime`: System uptime in seconds
@@ -123,8 +126,8 @@ The system provides the following Prometheus metrics:
 - `bike_total_warning_time`: Total warning time
 - `bike_warning_count`: Number of warnings
 - `bike_service_disable_count`: Service disable events
-- `bike_peak_rpm`: Highest recorded RPM
-- `bike_peak_speed`: Highest recorded speed
+- `bike_peak_rpm`: Highest recorded RPM (resets every 5 minutes)
+- `bike_peak_speed`: Highest recorded speed in km/h (resets every 5 minutes)
 - `bike_total_pulses`: Total hall sensor pulses
 - `bike_error_count`: System errors
 - `bike_metrics_update_interval`: Current update frequency
@@ -132,14 +135,15 @@ The system provides the following Prometheus metrics:
 ## Warning System
 
 The system provides audio warnings when:
-1. Pedaling stops
-2. Service is disabled
-3. System errors occur
+1. Pedaling stops (long beep)
+2. Pedaling starts (short beep)
+3. Service is disabled
+4. System errors occur
 
 Warning patterns:
-- Short beep: Pedaling start
-- Long beep: Pedaling stop
-- Multiple beeps: Warning pattern
+- Short beep (100ms): Pedaling start
+- Long beep (500ms): Pedaling stop
+- Multiple beeps: Warning pattern when stopped
 
 ## Service Control
 
@@ -152,6 +156,9 @@ The system can be controlled via HTTP endpoints:
 - Active state: Metrics update every 1 second
 - Disabled state: Metrics update every 5 seconds
 - Automatic resource optimization
+- Log rotation (10MB file size limit)
+- Thread-safe operations
+- Peak metrics auto-reset every 5 minutes
 
 ## Contributing
 
