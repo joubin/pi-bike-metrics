@@ -160,6 +160,11 @@ The system can be controlled via HTTP endpoints:
 - Thread-safe operations
 - Peak metrics auto-reset every 5 minutes
 
+
+## Grafana Dashboard
+
+![alt text](assets/image.png)
+
 ## Contributing
 
 Feel free to submit issues and enhancement requests!
