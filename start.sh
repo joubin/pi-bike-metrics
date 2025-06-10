@@ -8,7 +8,10 @@ cd "$SCRIPT_DIR"
 
 # Pull latest changes
 echo "Pulling latest changes..."
+git reset --hard
 git pull
+echo "Pulled everything"
+
 
 # Start the service
 echo "Starting BikeOS..."
